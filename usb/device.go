@@ -31,3 +31,15 @@ type ControlDevice interface {
 	// If handled is true, the returned bytes (if any) will be used as the IN data stage.
 	HandleControl(bmRequestType, bRequest uint8, wValue, wIndex, wLength uint16, data []byte) (resp []byte, handled bool)
 }
+
+// IsoDevice is an optional interface for devices with isochronous endpoints,
+// such as USB audio. The server paces completions at the endpoint's interval.
+type IsoDevice interface {
+	// HandleIsoOut consumes the packets of one isochronous OUT transfer.
+	// ep is the endpoint number (without direction).
+	HandleIsoOut(ep uint32, packets [][]byte)
+
+	// HandleIsoIn fills the packets of one isochronous IN transfer. Each
+	// packet is pre-sized to the length the host asked for.
+	HandleIsoIn(ep uint32, packets [][]byte)
+}

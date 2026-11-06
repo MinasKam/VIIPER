@@ -175,6 +175,7 @@ const (
 	urbHdrOffsetUnlink  = 0x14
 	urbHdrOffsetFlags   = 0x14
 	urbHdrOffsetLength  = 0x18
+	urbHdrOffsetPackets = 0x20
 	urbHdrOffsetSetup   = 0x28
 
 	// Standard header peek size
@@ -648,6 +649,26 @@ func (s *Server) handleUrbStream(conn net.Conn, dev usb.Device) error {
 
 	var outPayloadScratch []byte
 
+	iso := &isoStream{
+		server:  s,
+		conn:    conn,
+		dev:     dev,
+		ctx:     ctx,
+		pending: pending,
+		pendMu:  &pendingMu,
+		write: func(b []byte) error {
+			writeMu.Lock()
+			defer writeMu.Unlock()
+			if _, err := writer.Write(b); err != nil {
+				return err
+			}
+			if bw != nil {
+				return bw.Flush()
+			}
+			return nil
+		},
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -736,6 +757,13 @@ func (s *Server) handleUrbStream(conn net.Conn, dev usb.Device) error {
 			if err := usbip.ReadExactly(conn, outPayload); err != nil {
 				return fmt.Errorf("read OUT payload: %w", err)
 			}
+		}
+
+		if numPackets := binary.BigEndian.Uint32(hdr[urbHdrOffsetPackets : urbHdrOffsetPackets+4]); numPackets != 0 && numPackets != isoNotIso {
+			if err := iso.submit(seq, ep, dir, numPackets, xferLen, outPayload); err != nil {
+				return err
+			}
+			continue
 		}
 
 		if dir == usbip.DirIn && ep != 0 {

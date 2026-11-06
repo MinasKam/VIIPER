@@ -97,6 +97,13 @@ static void viiper_call_ds_output(DSOutputCallback fn, DSDeviceHandle handle, ui
 	fn(handle, rumbleSmall, rumbleLarge, ledRed, ledGreen, ledBlue, playerLeds);
 }
 
+// Haptics: interleaved left/right signed 16-bit samples at 48 kHz, valid only during the call.
+typedef void (*DSHapticsCallback)(DSDeviceHandle handle, const int16_t* samples, uint32_t frames);
+
+static void viiper_call_ds_haptics(DSHapticsCallback fn, DSDeviceHandle handle, const int16_t* samples, uint32_t frames) {
+	fn(handle, samples, frames);
+}
+
 */
 import "C"
 import (
@@ -106,6 +113,7 @@ import (
 	"log/slog"
 	"runtime/cgo"
 	"slices"
+	"unsafe"
 
 	"github.com/Alia5/VIIPER/device"
 	"github.com/Alia5/VIIPER/device/dualsense"
@@ -156,6 +164,55 @@ func CreateDualSenseEdgeDevice(
 	return createDualSenseDevice(serverHandle, outDeviceHandle, busID, autoAttachLocalhost, idVendor, idProduct, meta, true)
 }
 
+// CreateDualSenseEdgeAudioDevice creates a DualSense Edge that also has the controller's USB audio device,
+// so games can send it haptics (see SetDualSenseHapticsCallback).
+// @param serverHandle Handle to the USB server.
+// @param outDeviceHandle Output parameter for the created device handle.
+// @param busID ID of the bus to add the device to.
+// @param autoAttachLocalhost If true, the device will be automatically attached to a USBIP-Client/Driver running on THIS machine.
+// @param idVendor Optional USB vendor ID (0 = default).
+// @param idProduct Optional USB product ID (0 = default).
+// @param meta Optional pointer to initial device metadata. Pass NULL to use defaults.
+//
+//export CreateDualSenseEdgeAudioDevice
+func CreateDualSenseEdgeAudioDevice(
+	serverHandle C.USBServerHandle,
+	outDeviceHandle *C.DSDeviceHandle,
+	busID uint32,
+	autoAttachLocalhost bool,
+	idVendor uint16,
+	idProduct uint16,
+	meta *C.DSMetaState,
+) bool {
+	return createDualSenseDeviceWith(serverHandle, outDeviceHandle, busID, autoAttachLocalhost, idVendor, idProduct, meta, dualsense.NewEdgeWithAudio)
+}
+
+// SetDualSenseHapticsCallback sets a callback receiving the haptics channels a game plays into the
+// controller's audio device. Only devices created with CreateDualSenseEdgeAudioDevice have them.
+// @param handle Handle to the DualSense device.
+// @param callback Callback receiving interleaved left/right signed 16-bit samples at 48 kHz and the frame count. Pass NULL to clear.
+//
+//export SetDualSenseHapticsCallback
+func SetDualSenseHapticsCallback(handle C.DSDeviceHandle, cb C.DSHapticsCallback) bool {
+	dh := cgo.Handle(handle)
+	dhw, ok := dh.Value().(*deviceHandleWrapper)
+	if !ok {
+		return false
+	}
+	dsDevice, ok := dhw.device.(*dualsense.DualSense)
+	if !ok {
+		return false
+	}
+	if cb == nil {
+		dsDevice.SetHapticsCallback(nil)
+		return true
+	}
+	dsDevice.SetHapticsCallback(func(samples []int16) {
+		C.viiper_call_ds_haptics(cb, handle, (*C.int16_t)(unsafe.Pointer(&samples[0])), C.uint32_t(len(samples)/2))
+	})
+	return true
+}
+
 func createDualSenseDevice(
 	serverHandle C.USBServerHandle,
 	outDeviceHandle *C.DSDeviceHandle,
@@ -165,6 +222,23 @@ func createDualSenseDevice(
 	idProduct uint16,
 	meta *C.DSMetaState,
 	edge bool,
+) bool {
+	ctor := dualsense.New
+	if edge {
+		ctor = dualsense.NewEdge
+	}
+	return createDualSenseDeviceWith(serverHandle, outDeviceHandle, busID, autoAttachLocalhost, idVendor, idProduct, meta, ctor)
+}
+
+func createDualSenseDeviceWith(
+	serverHandle C.USBServerHandle,
+	outDeviceHandle *C.DSDeviceHandle,
+	busID uint32,
+	autoAttachLocalhost bool,
+	idVendor uint16,
+	idProduct uint16,
+	meta *C.DSMetaState,
+	ctor func(*device.CreateOptions) (*dualsense.DualSense, error),
 ) bool {
 	sh := cgo.Handle(serverHandle)
 	shw, ok := sh.Value().(*usbServerHandleWrapper)
@@ -200,10 +274,6 @@ func createDualSenseDevice(
 		opts.DeviceSpecific = string(b)
 	}
 
-	ctor := dualsense.New
-	if edge {
-		ctor = dualsense.NewEdge
-	}
 	d, err := ctor(opts)
 	if err != nil {
 		return false

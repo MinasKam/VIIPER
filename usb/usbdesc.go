@@ -336,6 +336,9 @@ type EndpointDescriptor struct {
 	BMAttributes     uint8
 	WMaxPacketSize   uint16 // LE
 	BInterval        uint8
+	// Trailing holds extra standard fields after bInterval, such as the
+	// bRefresh/bSynchAddress pair of USB Audio Class 1.0 endpoints.
+	Trailing Data
 
 	// ClassDescriptors are optional endpoint-level class-specific descriptors
 	// emitted immediately after this endpoint descriptor.
@@ -343,12 +346,13 @@ type EndpointDescriptor struct {
 }
 
 func (e EndpointDescriptor) Write(b *bytes.Buffer) {
-	b.WriteByte(EndpointDescLen)
+	b.WriteByte(uint8(EndpointDescLen + len(e.Trailing)))
 	b.WriteByte(EndpointDescType)
 	b.WriteByte(e.BEndpointAddress)
 	b.WriteByte(e.BMAttributes)
 	_ = binary.Write(b, binary.LittleEndian, e.WMaxPacketSize)
 	b.WriteByte(e.BInterval)
+	b.Write(e.Trailing)
 
 }
 

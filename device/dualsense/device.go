@@ -24,6 +24,7 @@ type DualSense struct {
 
 	outputFunc func(OutputState)
 	descriptor usb.Descriptor
+	audio      *audioState // nil unless created with audio
 
 	subcommand [2]byte
 
@@ -197,6 +198,11 @@ func (d *DualSense) HandleTransfer(ctx context.Context, ep uint32, dir uint32, o
 }
 
 func (d *DualSense) HandleControl(bmRequestType, bRequest uint8, wValue, wIndex, wLength uint16, data []byte) ([]byte, bool) {
+	if d.audio != nil {
+		if resp, handled := d.handleAudioControl(bmRequestType, bRequest, wValue, wIndex, wLength, data); handled {
+			return resp, true
+		}
+	}
 	reportType := uint8(wValue >> 8)
 	reportID := uint8(wValue & 0xFF)
 
